@@ -134,7 +134,7 @@ class MINDDataFrame(Dataset):
             self.data_dir, "MIND" + self.dataset_size + "_" + self.data_split
         )
 
-        if download:
+        if download and not os.path.exists(self.dst_dir):
             url = dataset_url[dataset_size][self.data_split]
             log.info(
                 f"Downloading MIND{self.dataset_size} dataset for {self.data_split} from {url}."
