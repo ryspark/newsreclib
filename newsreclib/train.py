@@ -1,5 +1,7 @@
 from typing import List, Optional, Tuple
 
+import os
+import sys
 import hydra
 import lightning as L
 import pyrootutils
@@ -67,7 +69,7 @@ def train(cfg: DictConfig) -> Tuple[dict, dict]:
     logger: List[Logger] = utils.instantiate_loggers(cfg.get("logger"))
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
-    trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
+    trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger, limit_predict_batches=2)
 
     object_dict = {
         "cfg": cfg,
@@ -82,6 +84,35 @@ def train(cfg: DictConfig) -> Tuple[dict, dict]:
         log.info("Logging hyperparameters!")
         utils.log_hyperparameters(object_dict)
 
+    if cfg.get("embed"):
+        assert 'embed_save_path' in cfg, "Need to specify 'embed_save_path' in config"
+        for split in ("train", "valid", "test"):
+            log.info(f"Generating embeddings on {split}")
+            datamodule.predict_dataloader = getattr(datamodule, f"{split}_dataloader")
+            predictions = trainer.predict(model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+            unique_user_embeddings = set()
+            unique_news_embeddings = set()
+            for i, (_, user, news, mask) in enumerate(predictions):
+                # user: (batch size, embed dim)
+                # news: (batch size, max # of articles, embed dim)
+                # mask: (batch size, max # of articles)
+                for u in user:
+                    embedding = tuple(u.detach().cpu().numpy())
+                    unique_user_embeddings.add(embedding)
+                for news_batch, mask_batch in zip(news, mask):
+                    for article, m in zip(news_batch, mask_batch):
+                        if m.item() != 0:
+                            embedding = tuple(article.detach().cpu().numpy())
+                            unique_news_embeddings.add(embedding)
+            user_embeds = torch.tensor(list(unique_user_embeddings))
+            news_embeds = torch.tensor(list(unique_news_embeddings))
+            save_path = cfg["embed_save_path"].replace("{exp}", cfg.experiment)
+            save_path = save_path.replace("{split}", split)
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            torch.save({'user_embeds': user_embeds, 'news_embeds': news_embeds}, save_path)
+            log.info(f"Saved to {save_path}")
+        sys.exit(0)
+
     if cfg.get("compile"):
         log.info("Compiling model!")
         model = torch.compile(model)
@@ -89,7 +120,7 @@ def train(cfg: DictConfig) -> Tuple[dict, dict]:
     if cfg.get("train"):
         log.info("Starting training!")
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
-
+    
     train_metrics = trainer.callback_metrics
 
     if cfg.get("test"):
