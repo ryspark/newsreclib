@@ -14,5 +14,4 @@ conda activate news
 cd /iris/u/rypark/code/newsreclib
 pwd
 
-python newsreclib/train.py experiment=nrms_mindsmall_pretrainedemb_celoss_bertsent trainer.accelerator=gpu
-#+trainer.strategy=ddp trainer.devices=4
+python newsreclib/train.py experiment=tanr_mindsmall_pretrainedemb_celoss_bertsent

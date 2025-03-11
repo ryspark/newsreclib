@@ -1,11 +1,12 @@
 from typing import Dict, List, Optional, Tuple
+from collections import defaultdict
 
 import torch
+from torch.nn import functional as F
 from torch_geometric.utils import to_dense_batch
 from torchmetrics import MetricCollection
 from torchmetrics.classification import AUROC
 from torchmetrics.retrieval import RetrievalMRR, RetrievalNormalizedDCG
-
 from newsreclib.data.components.batch import RecommendationBatch
 from newsreclib.metrics.diversity import Diversity
 from newsreclib.metrics.personalization import Personalization
@@ -234,7 +235,7 @@ class NRMSModule(AbstractRecommneder):
 
         # encode candidates
         cand_news_vector = self.news_encoder(batch["x_cand"])
-        cand_news_vector_agg, _ = to_dense_batch(cand_news_vector, batch["batch_cand"])
+        cand_news_vector_agg, mask = to_dense_batch(cand_news_vector, batch["batch_cand"])
 
         if not self.hparams.late_fusion:
             # encode user
@@ -250,9 +251,31 @@ class NRMSModule(AbstractRecommneder):
         # click scores
         scores = self.click_predictor(
             user_vector.unsqueeze(dim=1), cand_news_vector_agg.permute(0, 2, 1)
-        )
+        )  # [number of users, number of max articles per user]
+        
+        batch['x_cand']['category']
+        (user, news) = ([past news 1, past news 2, ...], query news)
+        (user, news) = ()
+        init beta
+        for past viewed article in user:
+            update beta counts for appropraite category
+        sample new scores from beta
+        return new scores
 
-        return scores
+        # TODO: update priors
+        #batch['x_cand']['category']
+        scores += (~mask).float() * -1e9
+        probs = F.softmax(scores, dim=-1)
+
+        pseudocount = 100
+        bonus = mask.float()
+        bonus[bonus == 0.0] = 1e-6
+        alpha = (pseudocount * probs + bonus).float()
+        beta = (pseudocount * (1 - probs) + bonus).float()
+
+        prior = torch.distributions.Beta(alpha, beta)
+        new_probs = prior.rsample()
+        return new_probs
 
     def on_train_start(self) -> None:
         pass
@@ -273,6 +296,17 @@ class NRMSModule(AbstractRecommneder):
         torch.Tensor,
     ]:
         scores = self.forward(batch)
+        for k, v in batch.items():
+            if isinstance(v, dict):
+                for k1, v1 in v.items():
+                    s = None
+                    if k1 in ('category', 'subcategory', 'sentiment', 'news_ids'):
+                        s = v1[:5]
+                    print(k, ":::", k1, v1.shape, s)
+            else:
+                print(k, v.shape, v[:5], v.unique())
+        print()
+        print()
 
         y_true, mask_cand = to_dense_batch(batch["labels"], batch["batch_cand"])
         candidate_categories, _ = to_dense_batch(batch["x_cand"]["category"], batch["batch_cand"])
