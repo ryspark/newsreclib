@@ -95,7 +95,7 @@ class ThompsonSamplingMixin:
                     cat_val = int(c.item())
                     # Only update if this category appears among the candidates
                     if cat_val in beta_params:
-                        print(cat_val, beta_params[cat_val][0])
+                        # print(cat_val, beta_params[cat_val][0])
                         beta_params[cat_val][0] = beta_params[cat_val][0] + 1
 
                 # --- Sample from each per-category Beta distribution ---
