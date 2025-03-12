@@ -248,7 +248,11 @@ class DKNModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
         if not self.hparams.late_fusion:
             scores = torch.where(~mask_cand, torch.tensor(0.0, device=self.device), scores)
 
-        return self._wrap_forward(scores, mask_cand, batch)
+        return self.apply_thompson_sampling(
+            scores, batch,
+            cand_news_vector_agg, mask_cand, 
+            hist_news_vector_agg, mask_hist
+        )
 
     def on_train_start(self) -> None:
         pass

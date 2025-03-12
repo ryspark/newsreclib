@@ -253,7 +253,7 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
 
         # encode candidates
         cand_news_vector = self.news_encoder(batch["x_cand"])
-        cand_news_vector_agg, mask = to_dense_batch(cand_news_vector, batch["batch_cand"])
+        cand_news_vector_agg, mask_cand = to_dense_batch(cand_news_vector, batch["batch_cand"])
 
         if not self.hparams.late_fusion:
             # encode user
@@ -271,7 +271,11 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
             user_vector.unsqueeze(dim=1), cand_news_vector_agg.permute(0, 2, 1)
         )  # shape: [num_users, max_candidates]
 
-        return self._wrap_forward(scores, mask, batch)
+        return self.apply_thompson_sampling(
+            scores, batch,
+            cand_news_vector_agg, mask_cand, 
+            hist_news_vector_agg, mask_hist
+        )
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         # used for generating clusters before ts training

@@ -262,7 +262,11 @@ class NPAModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
         scores = self.click_predictor(
             user_vector.unsqueeze(dim=1), cand_news_vector_agg.permute(0, 2, 1)
         )
-        return self._wrap_forward(scores, mask_cand, batch)
+        return self.apply_thompson_sampling(
+            scores, batch,
+            cand_news_vector_agg, mask_cand, 
+            hist_news_vector_agg, mask_hist
+        )
 
     def on_train_start(self) -> None:
         pass

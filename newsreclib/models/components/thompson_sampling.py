@@ -25,8 +25,11 @@ class ThompsonSamplingMixin:
     def _apply_thompson_sampling(
         self,
         scores: torch.Tensor,
-        mask: torch.Tensor,
         batch: RecommendationBatch,
+        cand_embeds: torch.Tensor = None,
+        cand_mask: torch.Tensor = None,
+        hist_embeds: torch.Tensor = None,
+        hist_mask: torch.Tensor = None,
     ) -> torch.Tensor:
         """Apply Thompson sampling to the scores.
 
@@ -38,11 +41,11 @@ class ThompsonSamplingMixin:
         Returns:
             torch.Tensor: Thompson sampled probabilities [num_users, max_candidates]
         """
-        scores += (~mask).float() * -1e9
+        scores += (~cand_mask).float() * -1e9
         probs = F.softmax(scores, dim=-1)
 
         pseudocount = self.ts_pseudocount
-        bonus = mask.float()
+        bonus = cand_mask.float()
         bonus[bonus == 0.0] = 1e-6
 
         if self.ts_mode == "resample":
@@ -69,7 +72,7 @@ class ThompsonSamplingMixin:
                 cat_row = cand_category[i]       # candidate categories (dense)
                 prob_row = probs[i]              # candidate probabilities (dense)
                 bonus_row = bonus[i]
-                mask_row = mask[i]               # valid candidate positions
+                mask_row = cand_mask[i]               # valid candidate positions
 
                 # --- Initialize per-category Beta parameters for this user ---
                 beta_params = {}
@@ -118,14 +121,6 @@ class ThompsonSamplingMixin:
 
         elif self.ts_mode == "embed":
             # Embedding-based implementation
-            # Get candidate news embeddings [num_users, max_candidates, embed_dim]
-            cand_embeds = batch["x_cand"]["news_vector"]
-            cand_embeds, _ = to_dense_batch(cand_embeds, batch["batch_cand"])
-            
-            # Get history news embeddings [num_users, max_history, embed_dim]
-            hist_embeds = batch["x_hist"]["news_vector"]
-            hist_embeds, hist_mask = to_dense_batch(hist_embeds, batch["batch_hist"])
-
             # Initialize alpha and beta parameters for each candidate article
             alpha = pseudocount * probs + bonus
             beta = pseudocount * (1 - probs) + bonus
@@ -133,7 +128,7 @@ class ThompsonSamplingMixin:
             # Compute cosine similarities between candidates and history for all users at once
             # First create a combined mask for valid pairs
             # [num_users, max_candidates, max_history]
-            combined_mask = mask.unsqueeze(-1) & hist_mask.unsqueeze(1)
+            combined_mask = cand_mask.unsqueeze(-1) & hist_mask.unsqueeze(1)
 
             # Reshape tensors for batch computation
             # [num_users, max_candidates, 1, embed_dim] and [num_users, 1, max_history, embed_dim]
@@ -166,17 +161,32 @@ class ThompsonSamplingMixin:
 
             return new_probs
 
-    def _wrap_forward(self, scores: torch.Tensor, mask: torch.Tensor, batch: RecommendationBatch) -> torch.Tensor:
+    def apply_thompson_sampling(
+        self,
+        scores: torch.Tensor,
+        batch: RecommendationBatch,
+        cand_embeds: torch.Tensor,
+        cand_mask: torch.Tensor,
+        hist_embeds: torch.Tensor,
+        hist_mask: torch.Tensor,
+    ) -> torch.Tensor:
         """Wraps the forward pass with Thompson sampling if enabled.
 
         Args:
-            scores: Raw scores from the model
-            mask: Boolean mask indicating valid candidates
-            batch: The batch data containing candidate and history information
+            scores: Raw scores from the model [num_users, max_candidates]
+            mask: Boolean mask indicating valid candidates [num_users, max_candidates]
+            batch: The batch data containing candidate and history information 
+            cand_embeds: Candidate news embeddings [num_users, max_candidates, embed_dim]
+            hist_embeds: History news embeddings [num_users, max_history, embed_dim]
+            hist_mask: Boolean mask indicating valid history items [num_users, max_history]
 
         Returns:
             torch.Tensor: Original scores or Thompson sampled probabilities
         """
         if self.ts_mode is not None and self.ts_pseudocount != 0:
-            return self._apply_thompson_sampling(scores, mask, batch)
+            return self._apply_thompson_sampling(
+                scores, batch, 
+                cand_embeds, cand_mask, 
+                hist_embeds, hist_mask
+            )
         return scores 

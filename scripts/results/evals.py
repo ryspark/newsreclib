@@ -29,18 +29,17 @@ METRICS_TO_PLOT = [
 
 # Method mappings
 methods = {
-    "iclm3": "Mean+1/sqrt(n) ICL TS",
-    "iclmm": "Mean+1/n^2 ICL TS",
-    "iclm": "Mean in-context TS",
-    "icl": "In-context TS",
-    "prior": "No-iteration TS"
+    "embed": "Similarity IC-TS",
+    "category": "Category IC-TS",
+    "resample": "Resampling"
 }
 
 # Essential colors only
 colors = {
     'Base': '#7f8c8d',              # Gray for baseline
-    'No-iteration TS': '#e74c3c',   # Red for worse performance
-    'In-context TS': '#2ecc71',     # Green for better performance
+    'Similarity IC-TS': '#e74c3c',   # Red for worse performance
+    'Category IC-TS': '#2ecc71',     # Green for better performance
+    'Resampling': '#9467bd'     # Purple for resampling
 }
 
 def get_params(name):
@@ -60,12 +59,12 @@ for model_dir in os.listdir(root):
                 metrics["base_model"] = model_dir.split("_")[0].upper()
                 metrics["method"], metrics["counts"] = get_params(sample_type)
                 df_list.append(metrics)
-        except FileNotFoundError:
-            print(f"{fp} not found")
+        except (FileNotFoundError, KeyError):
+            print(f"skipping {fp}")
 df = pd.DataFrame(df_list)
 
 # Set style parameters
-plt.style.use('seaborn')
+#plt.style.use('seaborn')
 
 def get_dynamic_markers_and_sizes(unique_counts):
     """Create dynamic marker and size mappings based on count values"""
@@ -153,7 +152,7 @@ for metric_config in METRICS_TO_PLOT:
 
 # Create separate bar plots for metrics
 base_model_colors = ['#00B4D8', '#0077B6', '#023E8A']  # Blue gradient
-method_order = ['Base', 'No-iteration TS', 'In-context TS']
+method_order = list(colors.keys())
 
 # Use a clean, modern style
 plt.style.use('seaborn-v0_8-white')
@@ -187,14 +186,14 @@ for metric_config in METRICS_TO_PLOT:
                                   'alpha': 0.8},
                          zorder=3)
             
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height + 0.002,
-                       f'{value:.3f}',
-                       ha='center', va='bottom',
-                       fontsize=8,
-                       color='#444444',
-                       zorder=4)
+            # for bar, value in zip(bars, values):
+            #     height = bar.get_height()
+            #     ax.text(bar.get_x() + bar.get_width()/2., height + 0.002,
+            #            f'{value:.3f}',
+            #            ha='center', va='bottom',
+            #            fontsize=8,
+            #            color='#444444',
+            #            zorder=4)
         
         metric_label = metric_config['x_label'] if metric == metric_config['x'] else metric_config['y_label']
         
