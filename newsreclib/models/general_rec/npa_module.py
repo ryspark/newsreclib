@@ -106,15 +106,15 @@ class NPAModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
         metrics_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
-        ts_pseudocount: int = 0,
-        ts_icl: bool = False
+        ts_pseudocount: int = 10,
+        ts_mode: str = None
     ) -> None:
         super().__init__(
             outputs=outputs,
             optimizer=optimizer,
             scheduler=scheduler,
             ts_pseudocount=ts_pseudocount,
-            ts_icl=ts_icl,
+            ts_mode=ts_mode,
             save_metrics=save_metrics,
             metrics_fpath=metrics_fpath,
         )

@@ -6,8 +6,8 @@ dual_loss_coef: null
 loss: "cross_entropy_loss"
 late_fusion: False
 temperature: None
-ts_pseudocount: 0
-ts_icl: false
+ts_pseudocount: 10
+ts_mode: null
 save_metrics: false
 metrics_fpath: "${paths.output_dir}/user_metrics.json"
 

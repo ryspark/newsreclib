@@ -106,15 +106,15 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
         metrics_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
-        ts_pseudocount: int = 0,
-        ts_icl: bool = False
+        ts_pseudocount: int = 10,
+        ts_mode: str = None
     ) -> None:
         super().__init__(
             outputs=outputs,
             optimizer=optimizer,
             scheduler=scheduler,
             ts_pseudocount=ts_pseudocount,
-            ts_icl=ts_icl,
+            ts_mode=ts_mode,
             save_metrics=save_metrics,
             metrics_fpath=metrics_fpath,
         )
@@ -122,7 +122,7 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
         self.num_categ_classes = self.hparams.num_categ_classes + 1
         self.num_sent_classes = self.hparams.num_sent_classes + 1
         print("TS PSEUDOCOUNT", self.ts_pseudocount)
-        print("TS ICL", self.ts_icl)
+        print("TS MODE", self.ts_mode)
 
         if self.hparams.save_recs:
             assert isinstance(self.hparams.recs_fpath, str)
