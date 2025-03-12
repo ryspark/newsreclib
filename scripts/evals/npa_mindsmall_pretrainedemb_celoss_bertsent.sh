@@ -3,7 +3,7 @@
 #SBATCH --partition=iris-hi
 #SBATCH --nodes=1
 #SBATCH --mem=128G
-#SBATCH --gres=gpu:l40s:1
+#SBATCH --gres=gpu:a40:1
 #SBATCH --time=240:00:00
 #SBATCH --job-name=eval
 #SBATCH --output slurm/%j.out
@@ -44,7 +44,7 @@ cd /iris/u/rypark/code/newsreclib
 pwd
 
 python newsreclib/eval.py experiment=npa_mindsmall_pretrainedemb_celoss_bertsent \
-    ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/npa_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-11_13-01-53/checkpoints/last.ckpt \
+    ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/npa_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-11_12-59-45/checkpoints/last.ckpt \
     logger=csv \
     model.ts_pseudocount=$PSEUDOCOUNT \
     model.ts_icl=$USE_ICL \
