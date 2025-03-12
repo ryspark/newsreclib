@@ -44,7 +44,7 @@ cd /iris/u/rypark/code/newsreclib
 pwd
 
 python newsreclib/eval.py experiment=nrms_mindsmall_pretrainedemb_celoss_bertsent \
-    ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/nrms_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-11_13-01-53/checkpoints/last.ckpt \
+    ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/nrms_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-01_16-53-36/checkpoints/last.ckpt \
     logger=csv \
     model.ts_pseudocount=$PSEUDOCOUNT \
     model.ts_icl=$USE_ICL \
