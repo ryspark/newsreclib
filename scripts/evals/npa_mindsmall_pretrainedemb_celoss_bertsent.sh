@@ -8,23 +8,34 @@
 #SBATCH --job-name=eval
 #SBATCH --output slurm/%j.out
 
-# Check if pseudocount argument is provided
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <pseudocount>"
+# Check if at least one argument is provided
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "Usage: $0 <pseudocount> [use_icl]"
+    echo "  pseudocount: Thompson sampling pseudocount value"
+    echo "  use_icl: Optional. If specified and non-zero, enables ICL mode"
     exit 1
 fi
 
 PSEUDOCOUNT=$1
+USE_ICL=false
+DIR_PREFIX="prior"
+
+# If second argument is provided and non-zero, enable ICL
+if [ $# -eq 2 ] && [ $2 -ne 0 ]; then
+    USE_ICL=true
+    DIR_PREFIX="icl"
+fi
 
 # Set directory suffix based on pseudocount
 if [ "$PSEUDOCOUNT" = "0" ]; then
     DIR_SUFFIX="base"
 else
-    DIR_SUFFIX="prior_$PSEUDOCOUNT"
+    DIR_SUFFIX="${DIR_PREFIX}_$PSEUDOCOUNT"
 fi
 
 echo $PSEUDOCOUNT
 echo $DIR_SUFFIX
+echo "ICL mode: $USE_ICL"
 
 ulimit -n 64000
 source ~/.bashrc
@@ -33,7 +44,8 @@ cd /iris/u/rypark/code/newsreclib
 pwd
 
 python newsreclib/eval.py experiment=npa_mindsmall_pretrainedemb_celoss_bertsent \
-    ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/npa_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-11_12-59-45 \
+    ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/npa_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-11_13-01-53/checkpoints/last.ckpt \
     logger=csv \
     model.ts_pseudocount=$PSEUDOCOUNT \
-    hydra.run.dir=/iris/u/rypark/code/newsreclib/logs/eval/runs/npa_mindsmall_pretrainedemb_celoss_bertsent_s42/$DIR_SUFFIX 
+    model.ts_icl=$USE_ICL \
+    hydra.run.dir=/iris/u/rypark/code/newsreclib/logs/eval/runs/npa_mindsmall_pretrainedemb_celoss_bertsent/$DIR_SUFFIX

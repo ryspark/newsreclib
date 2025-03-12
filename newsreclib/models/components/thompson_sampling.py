@@ -50,10 +50,10 @@ class ThompsonSamplingMixin:
             cand_category, _ = to_dense_batch(batch["x_cand"]["category"], batch["batch_cand"], fill_value=-1)
             # For history articles: shape [num_users, max_history]
             hist_category, hist_mask = to_dense_batch(batch["x_hist"]["category"], batch["batch_hist"], fill_value=-1)
-            print("-" * 80)
-            print(cand_category.shape, batch['x_cand']['category'].shape, batch['batch_cand'].shape)
-            print(hist_category.shape, batch['x_hist']['category'].shape, batch['batch_hist'].shape)
-            print("-" * 80)
+            # print("-" * 80)
+            # print(cand_category.shape, batch['x_cand']['category'].shape, batch['batch_cand'].shape)
+            # print(hist_category.shape, batch['x_hist']['category'].shape, batch['batch_hist'].shape)
+            # print("-" * 80)
 
             num_users = probs.shape[0]
             max_candidates = probs.shape[1]
@@ -84,13 +84,13 @@ class ThompsonSamplingMixin:
                 hist_row = hist_category[i]      # history categories for user i
                 hist_mask_row = hist_mask[i]
                 valid_hist = hist_row[hist_mask_row]
-                print('=' *80)
-                print(hist_row)
-                print(hist_mask_row)
-                print(valid_hist)
-                print('unique cats', unique_cats)
-                print('valid cats', valid_cat)
-                print('=' *80)
+                # print('=' *80)
+                # print(hist_row)
+                # print(hist_mask_row)
+                # print(valid_hist)
+                # print('unique cats', unique_cats)
+                # print('valid cats', valid_cat)
+                # print('=' *80)
                 for c in valid_hist:
                     cat_val = int(c.item())
                     # Only update if this category appears among the candidates
@@ -117,12 +117,12 @@ class ThompsonSamplingMixin:
 
                 sampled_probs.append(new_prob_row)
 
-                print("~" * 80)
-                print(beta_params, new_prob_row)
-                print()
-                print(cat_row.unique(return_counts=True))
-                print("~" * 80)
-                print()
+                # print("~" * 80)
+                # print(beta_params, new_prob_row)
+                # print()
+                # print(cat_row.unique(return_counts=True))
+                # print("~" * 80)
+                # print()
             new_probs = torch.stack(sampled_probs, dim=0)
 
         else:

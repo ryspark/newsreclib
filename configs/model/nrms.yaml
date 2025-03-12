@@ -7,7 +7,7 @@ loss: "cross_entropy_loss"
 late_fusion: False
 temperature: None
 ts_pseudocount: 0
-
+ts_icl: false
 # news encoder
 dataset_attributes: ${data.dataset_attributes}
 attributes2encode: ["title"]
