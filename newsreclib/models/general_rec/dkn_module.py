@@ -15,9 +15,10 @@ from newsreclib.models.abstract_recommender import AbstractRecommneder
 from newsreclib.models.components.encoders.news.news import KCNN as NewsEncoder
 from newsreclib.models.components.encoders.user.dkn import UserEncoder
 from newsreclib.models.components.layers.click_predictor import DNNPredictor, DotProduct
+from newsreclib.models.components.thompson_sampling import ThompsonSamplingMixin
 
 
-class DKNModule(AbstractRecommneder):
+class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
     """DKN: Deep knowledge-aware network for news recommendation
 
     Reference: Wang, Hongwei, Fuzheng Zhang, Xing Xie, and Minyi Guo. "DKN: Deep knowledge-aware network for news recommendation." In Proceedings of the 2018 world wide web conference, pp. 1835-1844. 2018.
@@ -92,11 +93,15 @@ class DKNModule(AbstractRecommneder):
         recs_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
+        ts_pseudocount: int = 0,
+        ts_icl: bool = False
     ) -> None:
         super().__init__(
             outputs=outputs,
             optimizer=optimizer,
             scheduler=scheduler,
+            ts_pseudocount=ts_pseudocount,
+            ts_icl=ts_icl,
         )
 
         self.num_categ_classes = self.hparams.num_categ_classes + 1
@@ -236,7 +241,7 @@ class DKNModule(AbstractRecommneder):
         if not self.hparams.late_fusion:
             scores = torch.where(~mask_cand, torch.tensor(0.0, device=self.device), scores)
 
-        return scores
+        return self._wrap_forward(scores, mask_cand, batch)
 
     def on_train_start(self) -> None:
         pass

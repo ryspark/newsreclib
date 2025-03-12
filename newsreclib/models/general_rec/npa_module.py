@@ -14,9 +14,10 @@ from newsreclib.models.components.encoders.news.text import CNNPersAtt
 from newsreclib.models.components.encoders.user.npa import UserEncoder
 from newsreclib.models.components.layers.click_predictor import DotProduct
 from newsreclib.models.components.layers.projection import UserProjection
+from newsreclib.models.components.thompson_sampling import ThompsonSamplingMixin
 
 
-class NPAModule(AbstractRecommneder):
+class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
     """NPA: neural news recommendation with personalized attention
 
     Reference: Wu, Chuhan, Fangzhao Wu, Mingxiao An, Jianqiang Huang, Yongfeng Huang, and Xing Xie. "NPA: neural news recommendation with personalized attention." In Proceedings of the 25th ACM SIGKDD international conference on knowledge discovery & data mining, pp. 2576-2584. 2019.
@@ -76,20 +77,20 @@ class NPAModule(AbstractRecommneder):
 
     def __init__(
         self,
+        dataset_attributes: List[str],
+        attributes2encode: List[str],
         outputs: Dict[str, List[str]],
         dual_loss_training: bool,
         dual_loss_coef: Optional[float],
         loss: str,
-        late_fusion: bool,
         temperature: Optional[float],
-        pretrained_embeddings_path: str,
-        text_embed_dim: int,
-        user_embed_dim: int,
-        num_users: int,
-        num_filters: int,
-        window_size: int,
-        word_pref_query_dim: int,
-        news_pref_query_dim: int,
+        use_plm: bool,
+        pretrained_embeddings_path: Optional[str],
+        plm_model: Optional[str],
+        frozen_layers: Optional[List[int]],
+        embed_dim: int,
+        num_heads: int,
+        query_dim: int,
         dropout_probability: float,
         top_k_list: List[int],
         num_categ_classes: int,
@@ -98,11 +99,15 @@ class NPAModule(AbstractRecommneder):
         recs_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
+        ts_pseudocount: int = 0,
+        ts_icl: bool = False
     ) -> None:
         super().__init__(
             outputs=outputs,
             optimizer=optimizer,
             scheduler=scheduler,
+            ts_pseudocount=ts_pseudocount,
+            ts_icl=ts_icl,
         )
 
         self.num_categ_classes = self.hparams.num_categ_classes + 1
@@ -243,11 +248,9 @@ class NPAModule(AbstractRecommneder):
             user_vector = torch.div(hist_news_vector_agg.sum(dim=1), hist_size.unsqueeze(dim=-1))
 
         # click scores
-        scores = self.click_predictor(
-            user_vector.unsqueeze(dim=1), cand_news_vector_agg.permute(0, 2, 1)
-        )
+        scores = self.click_predictor(user_vector, cand_news_vector_agg)
 
-        return scores
+        return self._wrap_forward(scores, mask_cand, batch)
 
     def on_train_start(self) -> None:
         pass
