@@ -6,6 +6,7 @@ dual_loss_coef: null
 loss: "cross_entropy_loss"
 late_fusion: False
 temperature: None
+ts_pseudocount: 0
 
 # news encoder
 dataset_attributes: ${data.dataset_attributes}

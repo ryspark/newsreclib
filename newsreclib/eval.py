@@ -1,5 +1,7 @@
+import os
 from typing import List, Tuple
 
+import json
 import hydra
 import pyrootutils
 from lightning import LightningDataModule, LightningModule, Trainer
@@ -76,6 +78,11 @@ def evaluate(cfg: DictConfig) -> Tuple[dict, dict]:
     # predictions = trainer.predict(model=model, dataloaders=dataloaders, ckpt_path=cfg.ckpt_path)
 
     metric_dict = trainer.callback_metrics
+    for k, v in metric_dict.items():
+        metric_dict[k] = v.item()
+    with open(os.path.join(cfg.paths.output_dir, "metrics.json"), "w+") as dump:
+        json.dump(metric_dict, dump, indent=4)
+    log.info(f"Wrote metrics to {cfg.paths.output_dir}/metrics.json")
 
     return metric_dict, object_dict
 

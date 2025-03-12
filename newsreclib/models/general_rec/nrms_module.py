@@ -98,6 +98,8 @@ class NRMSModule(AbstractRecommneder):
         recs_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
+        ts_pseudocount: int = 0,
+        ts_icl: bool = False
     ) -> None:
         super().__init__(
             outputs=outputs,
@@ -107,6 +109,10 @@ class NRMSModule(AbstractRecommneder):
 
         self.num_categ_classes = self.hparams.num_categ_classes + 1
         self.num_sent_classes = self.hparams.num_sent_classes + 1
+        self.ts_pseudocount = ts_pseudocount
+        self.ts_icl = ts_icl
+        print("TS PSEUDOCOUNT", self.ts_pseudocount)
+        print("TS ICL", self.ts_icl)
 
         if self.hparams.save_recs:
             assert isinstance(self.hparams.recs_fpath, str)
@@ -228,7 +234,7 @@ class NRMSModule(AbstractRecommneder):
         self.test_categ_pers_metrics = categ_pers_metrics.clone(prefix="test/")
         self.test_sent_pers_metrics = sent_pers_metrics.clone(prefix="test/")
 
-    def forward(self, batch: RecommendationBatch, return_embeds: bool = False) -> torch.Tensor:
+    def forward(self, batch: RecommendationBatch) -> torch.Tensor:
         # encode history
         hist_news_vector = self.news_encoder(batch["x_hist"])
         hist_news_vector_agg, mask_hist = to_dense_batch(hist_news_vector, batch["batch_hist"])
@@ -252,115 +258,108 @@ class NRMSModule(AbstractRecommneder):
         scores = self.click_predictor(
             user_vector.unsqueeze(dim=1), cand_news_vector_agg.permute(0, 2, 1)
         )  # shape: [num_users, max_candidates]
-        scores += (~mask).float() * -1e9
-        probs = F.softmax(scores, dim=-1)
 
-        # Pseudocount and bonus for Beta initialization
-        pseudocount = 100
-        bonus = mask.float()
-        bonus[bonus == 0.0] = 1e-6
+        if self.ts_pseudocount != 0:
+            scores += (~mask).float() * -1e9
+            probs = F.softmax(scores, dim=-1)
 
-        # --- Prepare dense category information ---
-        # For candidate articles: shape [num_users, max_candidates]
-        cand_category, _ = to_dense_batch(batch["x_cand"]["category"], batch["batch_cand"], fill_value=-1)
-        # For history articles: shape [num_users, max_history]
-        hist_category, hist_mask = to_dense_batch(batch["x_hist"]["category"], batch["batch_hist"], fill_value=-1)
-        print("-" * 80)
-        print(cand_category.shape, batch['x_cand']['category'].shape, batch['batch_cand'].shape)
-        print(hist_category.shape, batch['x_hist']['category'].shape, batch['batch_hist'].shape)
-        print("-" * 80)
+            pseudocount = self.ts_pseudocount
+            bonus = mask.float()
+            bonus[bonus == 0.0] = 1e-6
+            if self.ts_icl:
+                # --- Prepare dense category information ---
+                # For candidate articles: shape [num_users, max_candidates]
+                cand_category, _ = to_dense_batch(batch["x_cand"]["category"], batch["batch_cand"], fill_value=-1)
+                # For history articles: shape [num_users, max_history]
+                hist_category, hist_mask = to_dense_batch(batch["x_hist"]["category"], batch["batch_hist"], fill_value=-1)
+                print("-" * 80)
+                print(cand_category.shape, batch['x_cand']['category'].shape, batch['batch_cand'].shape)
+                print(hist_category.shape, batch['x_hist']['category'].shape, batch['batch_hist'].shape)
+                print("-" * 80)
 
-        num_users = probs.shape[0]
-        max_candidates = probs.shape[1]
-        sampled_probs = []
+                num_users = probs.shape[0]
+                max_candidates = probs.shape[1]
+                sampled_probs = []
 
-        for i in range(num_users):
-            # Candidate info for user i
-            cat_row = cand_category[i]       # candidate categories (dense)
-            prob_row = probs[i]              # candidate probabilities (dense)
-            bonus_row = bonus[i]
-            mask_row = mask[i]               # valid candidate positions
+                for i in range(num_users):
+                    # Candidate info for user i
+                    cat_row = cand_category[i]       # candidate categories (dense)
+                    prob_row = probs[i]              # candidate probabilities (dense)
+                    bonus_row = bonus[i]
+                    mask_row = mask[i]               # valid candidate positions
 
-            # --- Initialize per-category Beta parameters for this user ---
-            beta_params = {}
-            # Consider only valid candidate positions
-            valid_cat = cat_row[mask_row]
-            unique_cats = torch.unique(valid_cat)
-            for c in unique_cats:
-                # Select candidates belonging to category c
-                indices = (cat_row == c) & mask_row
-                sum_prob = prob_row[indices].sum()
-                sum_bonus = bonus_row[indices].sum()
-                init_alpha = pseudocount * sum_prob + sum_bonus
-                init_beta = pseudocount * ((1 - prob_row[indices]).sum()) + sum_bonus
-                beta_params[int(c.item())] = [1, 1]#init_alpha, init_beta]
+                    # --- Initialize per-category Beta parameters for this user ---
+                    beta_params = {}
+                    # Consider only valid candidate positions
+                    valid_cat = cat_row[mask_row]
+                    unique_cats = torch.unique(valid_cat)
+                    for c in unique_cats:
+                        # Select candidates belonging to category c
+                        indices = (cat_row == c) & mask_row
+                        sum_prob = prob_row[indices].sum()
+                        sum_bonus = bonus_row[indices].sum()
+                        init_alpha = pseudocount * sum_prob + sum_bonus
+                        init_beta = pseudocount * ((1 - prob_row[indices]).sum()) + sum_bonus
+                        beta_params[int(c.item())] = [1, 1]#init_alpha, init_beta]
 
-            # --- Update Beta parameters using the user’s history ---
-            hist_row = hist_category[i]      # history categories for user i
-            hist_mask_row = hist_mask[i]
-            valid_hist = hist_row[hist_mask_row]
-            print('=' *80)
-            print(hist_row)
-            print(hist_mask_row)
-            print(valid_hist)
-            print('unique cats', unique_cats)
-            print('valid cats', valid_cat)
-            print('=' *80)
-            for c in valid_hist:
-                cat_val = int(c.item())
-                # Only update if this category appears among the candidates
-                if cat_val in beta_params:
-                    print(cat_val, beta_params[cat_val][0])
-                    beta_params[cat_val][0] = beta_params[cat_val][0] + 1
+                    # --- Update Beta parameters using the user’s history ---
+                    hist_row = hist_category[i]      # history categories for user i
+                    hist_mask_row = hist_mask[i]
+                    valid_hist = hist_row[hist_mask_row]
+                    print('=' *80)
+                    print(hist_row)
+                    print(hist_mask_row)
+                    print(valid_hist)
+                    print('unique cats', unique_cats)
+                    print('valid cats', valid_cat)
+                    print('=' *80)
+                    for c in valid_hist:
+                        cat_val = int(c.item())
+                        # Only update if this category appears among the candidates
+                        if cat_val in beta_params:
+                            print(cat_val, beta_params[cat_val][0])
+                            beta_params[cat_val][0] = beta_params[cat_val][0] + 1
 
-            # --- Sample from each per-category Beta distribution ---
-            sampled_values = {}
-            for cat_val, (alpha_val, beta_val) in beta_params.items():
-                dist = torch.distributions.Beta(alpha_val, beta_val)
-                sampled_val = dist.rsample()
-                sampled_values[cat_val] = sampled_val
+                    # --- Sample from each per-category Beta distribution ---
+                    sampled_values = {}
+                    for cat_val, (alpha_val, beta_val) in beta_params.items():
+                        dist = torch.distributions.Beta(alpha_val, beta_val)
+                        sampled_val = dist.rsample()
+                        sampled_values[cat_val] = sampled_val
 
-            # --- Assign the sampled Beta value to each candidate article ---
-            new_prob_row = torch.zeros_like(prob_row)
-            for j in range(max_candidates):
-                if mask_row[j]:
-                    cat_val = int(cat_row[j].item())
-                    # If for some reason the candidate's category is missing, default to 0
-                    new_prob_row[j] = sampled_values.get(cat_val, torch.tensor(0.0, device=prob_row.device))
-                else:
-                    new_prob_row[j] = 0.0
+                    # --- Assign the sampled Beta value to each candidate article ---
+                    new_prob_row = torch.zeros_like(prob_row)
+                    for j in range(max_candidates):
+                        if mask_row[j]:
+                            cat_val = int(cat_row[j].item())
+                            # If for some reason the candidate's category is missing, default to 0
+                            new_prob_row[j] = sampled_values.get(cat_val, torch.tensor(0.0, device=prob_row.device))
+                        else:
+                            new_prob_row[j] = 0.0
 
-            sampled_probs.append(new_prob_row)
+                    sampled_probs.append(new_prob_row)
 
-            print("~" * 80)
-            print(beta_params, new_prob_row)
-            print()
-            print(cat_row.unique(return_counts=True))
-            print("~" * 80)
-            print()
-        new_probs = torch.stack(sampled_probs, dim=0)
-        return new_probs
+                    print("~" * 80)
+                    print(beta_params, new_prob_row)
+                    print()
+                    print(cat_row.unique(return_counts=True))
+                    print("~" * 80)
+                    print()
+                new_probs = torch.stack(sampled_probs, dim=0)
 
-        """
-        scores += (~mask).float() * -1e9
-        probs = F.softmax(scores, dim=-1)
+            else:
+                # Just initialize the TS and do not fit to icl examples
+                alpha = (pseudocount * probs + bonus).float()
+                beta = (pseudocount * (1 - probs) + bonus).float()
 
-        pseudocount = 100
-        bonus = mask.float()
-        bonus[bonus == 0.0] = 1e-6
-        alpha = (pseudocount * probs + bonus).float()
-        beta = (pseudocount * (1 - probs) + bonus).float()
+                prior = torch.distributions.Beta(alpha, beta)
+                new_probs = prior.rsample()
 
-        prior = torch.distributions.Beta(alpha, beta)
-        # IMPLEMENT THOMPSON SAMPLING
+            return new_probs
 
-        new_probs = prior.rsample()
-        return new_probs
+        else:
+            return scores
 
-        if return_embeds:
-            return scores, user_vector, cand_news_vector_agg, mask
-        return scores
-        """
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         # used for generating clusters before ts training
@@ -385,6 +384,7 @@ class NRMSModule(AbstractRecommneder):
         torch.Tensor,
     ]:
         scores = self.forward(batch)
+        """
         for k, v in batch.items():
             if isinstance(v, dict):
                 for k1, v1 in v.items():
@@ -396,6 +396,7 @@ class NRMSModule(AbstractRecommneder):
                 print(k, v.shape, v[:5], v.unique())
         print()
         print()
+        """
 
         y_true, mask_cand = to_dense_batch(batch["labels"], batch["batch_cand"])
         candidate_categories, _ = to_dense_batch(batch["x_cand"]["category"], batch["batch_cand"])

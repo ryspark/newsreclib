@@ -6,6 +6,7 @@ dual_loss_coef: null
 loss: "cross_entropy_loss"
 late_fusion: False
 temperature: None
+ts_pseudocount: 0
 
 # news encoder
 pretrained_word_embeddings_path: null
