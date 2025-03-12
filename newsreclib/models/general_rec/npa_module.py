@@ -15,9 +15,10 @@ from newsreclib.models.components.encoders.user.npa import UserEncoder
 from newsreclib.models.components.layers.click_predictor import DotProduct
 from newsreclib.models.components.layers.projection import UserProjection
 from newsreclib.models.components.thompson_sampling import ThompsonSamplingMixin
+from newsreclib.models.components.metrics import PerUserMetricsMixin
 
 
-class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
+class NPAModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder):
     """NPA: neural news recommendation with personalized attention
 
     Reference: Wu, Chuhan, Fangzhao Wu, Mingxiao An, Jianqiang Huang, Yongfeng Huang, and Xing Xie. "NPA: neural news recommendation with personalized attention." In Proceedings of the 25th ACM SIGKDD international conference on knowledge discovery & data mining, pp. 2576-2584. 2019.
@@ -69,6 +70,10 @@ class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
             Whether to save the recommendations (i.e., candidates news and corresponding scores) to disk in JSON format.
         recs_fpath:
             Path where to save the list of recommendations and corresponding scores for users.
+        save_metrics:
+            Whether to save per-user metrics during evaluation.
+        metrics_fpath:
+            Path where to save per-user metrics.
         optimizer:
             Optimizer used for model training.
         scheduler:
@@ -96,7 +101,9 @@ class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
         num_categ_classes: int,
         num_sent_classes: int,
         save_recs: bool,
+        save_metrics: bool,
         recs_fpath: Optional[str],
+        metrics_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
         ts_pseudocount: int = 0,
@@ -108,6 +115,8 @@ class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
             scheduler=scheduler,
             ts_pseudocount=ts_pseudocount,
             ts_icl=ts_icl,
+            save_metrics=save_metrics,
+            metrics_fpath=metrics_fpath,
         )
 
         self.num_categ_classes = self.hparams.num_categ_classes + 1
@@ -115,6 +124,8 @@ class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
 
         if self.hparams.save_recs:
             assert isinstance(self.hparams.recs_fpath, str)
+        if self.hparams.save_metrics:
+            assert isinstance(self.hparams.metrics_fpath, str)
 
         # initialize loss
         if not self.hparams.dual_loss_training:
@@ -499,6 +510,21 @@ class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
             preds, target_sentiments, hist_sentiments, cand_indexes, hist_indexes
         )
 
+        # Compute per-user metrics
+        if self.hparams.save_metrics:
+            per_user_metrics = self.compute_per_user_metrics(
+                preds=preds,
+                targets=targets,
+                target_categories=target_categories,
+                target_sentiments=target_sentiments,
+                cand_indexes=cand_indexes,
+                user_ids=user_ids,
+                num_categ_classes=self.num_categ_classes,
+                num_sent_classes=self.num_sent_classes,
+                top_k_list=self.hparams.top_k_list,
+            )
+            self.save_per_user_metrics(per_user_metrics, self.hparams.metrics_fpath)
+
         # log metrics
         self.log_dict(
             self.test_rec_metrics, on_step=False, on_epoch=True, prog_bar=True, logger=True
@@ -524,7 +550,6 @@ class NPAModule(ThompsonSamplingMixin, AbstractRecommneder):
                 scores=preds,
                 cand_news_size=cand_news_size,
             )
-            print(recommendations_dico)
             self._save_recommendations(
                 recommendations=recommendations_dico, fpath=self.hparams.recs_fpath
             )

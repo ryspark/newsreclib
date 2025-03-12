@@ -16,9 +16,10 @@ from newsreclib.models.components.encoders.news.news import KCNN as NewsEncoder
 from newsreclib.models.components.encoders.user.dkn import UserEncoder
 from newsreclib.models.components.layers.click_predictor import DNNPredictor, DotProduct
 from newsreclib.models.components.thompson_sampling import ThompsonSamplingMixin
+from newsreclib.models.components.metrics import PerUserMetricsMixin
 
 
-class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
+class DKNModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder):
     """DKN: Deep knowledge-aware network for news recommendation
 
     Reference: Wang, Hongwei, Fuzheng Zhang, Xing Xie, and Minyi Guo. "DKN: Deep knowledge-aware network for news recommendation." In Proceedings of the 2018 world wide web conference, pp. 1835-1844. 2018.
@@ -90,7 +91,9 @@ class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
         num_categ_classes: int,
         num_sent_classes: int,
         save_recs: bool,
+        save_metrics: bool,
         recs_fpath: Optional[str],
+        metrics_fpath: Optional[str],
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
         ts_pseudocount: int = 0,
@@ -102,6 +105,8 @@ class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
             scheduler=scheduler,
             ts_pseudocount=ts_pseudocount,
             ts_icl=ts_icl,
+            save_metrics=save_metrics,
+            metrics_fpath=metrics_fpath,
         )
 
         self.num_categ_classes = self.hparams.num_categ_classes + 1
@@ -109,6 +114,8 @@ class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
 
         if self.hparams.save_recs:
             assert isinstance(self.hparams.recs_fpath, str)
+        if self.hparams.save_metrics:
+            assert isinstance(self.hparams.metrics_fpath, str)
 
         # initialize loss
         if not self.hparams.dual_loss_training:
@@ -490,6 +497,21 @@ class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
             preds, target_sentiments, hist_sentiments, cand_indexes, hist_indexes
         )
 
+        # Compute per-user metrics
+        if self.hparams.save_metrics:
+            per_user_metrics = self.compute_per_user_metrics(
+                preds=preds,
+                targets=targets,
+                target_categories=target_categories,
+                target_sentiments=target_sentiments,
+                cand_indexes=cand_indexes,
+                user_ids=user_ids,
+                num_categ_classes=self.num_categ_classes,
+                num_sent_classes=self.num_sent_classes,
+                top_k_list=self.hparams.top_k_list,
+            )
+            self.save_per_user_metrics(per_user_metrics, self.hparams.metrics_fpath)
+
         # log metrics
         self.log_dict(
             self.test_rec_metrics, on_step=False, on_epoch=True, prog_bar=True, logger=True
@@ -515,7 +537,6 @@ class DKNModule(ThompsonSamplingMixin, AbstractRecommneder):
                 scores=preds,
                 cand_news_size=cand_news_size,
             )
-            print(recommendations_dico)
             self._save_recommendations(
                 recommendations=recommendations_dico, fpath=self.hparams.recs_fpath
             )
