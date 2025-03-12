@@ -259,8 +259,9 @@ class NPAModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
             user_vector = torch.div(hist_news_vector_agg.sum(dim=1), hist_size.unsqueeze(dim=-1))
 
         # click scores
-        scores = self.click_predictor(user_vector, cand_news_vector_agg)
-
+        scores = self.click_predictor(
+            user_vector.unsqueeze(dim=1), cand_news_vector_agg.permute(0, 2, 1)
+        )
         return self._wrap_forward(scores, mask_cand, batch)
 
     def on_train_start(self) -> None:
