@@ -274,7 +274,8 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
         return self.apply_thompson_sampling(
             scores, batch,
             cand_news_vector_agg, mask_cand, 
-            hist_news_vector_agg, mask_hist
+            hist_news_vector_agg, mask_hist,
+            user_vector
         )
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):

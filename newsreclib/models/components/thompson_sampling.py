@@ -30,6 +30,7 @@ class ThompsonSamplingMixin:
         cand_mask: torch.Tensor = None,
         hist_embeds: torch.Tensor = None,
         hist_mask: torch.Tensor = None,
+        user_vector: torch.Tensor = None,
     ) -> torch.Tensor:
         """Apply Thompson sampling to the scores.
 
@@ -37,6 +38,7 @@ class ThompsonSamplingMixin:
             scores: Raw scores from the model [num_users, max_candidates]
             mask: Boolean mask indicating valid candidates [num_users, max_candidates]
             batch: The batch data containing candidate and history information
+            user_vector: User embedding vector [num_users, embed_dim]
 
         Returns:
             torch.Tensor: Thompson sampled probabilities [num_users, max_candidates]
@@ -125,32 +127,38 @@ class ThompsonSamplingMixin:
             beta = pseudocount * (1 - probs) + bonus  # [num_users, max_candidates]
 
             # Process history through user encoder if available
-            hist_features = hist_embeds  # [num_users, max_history, embed_dim]
-            if hasattr(self, 'user_encoder'):
-                # Process each history embedding through user encoder
-                # [num_users, max_history, embed_dim] -> [num_users * max_history, embed_dim]
-                hist_features_flat = hist_features.reshape(-1, hist_features.shape[-1])
-                # Add dummy history dimension for user encoder
-                hist_features_flat = hist_features_flat.unsqueeze(1)  # [num_users * max_history, 1, embed_dim]
-                # Process through user encoder
-                hist_features_encoded = self.user_encoder(hist_features_flat)  # [num_users * max_history, embed_dim]
-                # Reshape back to [num_users, max_history, embed_dim]
-                hist_features = hist_features_encoded.reshape(hist_embeds.shape[0], hist_embeds.shape[1], -1)
+            hist_features = user_vector.unsqueeze(1)  # [num_users, 1, embed_dim]
+            # hist_features = hist_embeds  # [num_users, max_history, embed_dim]
+            # if hasattr(self, 'user_encoder'):
+            #     """
+            #     hist_features = self.user_encoder(hist_features)
+            #     hist_features = hist_features.unsqueeze(1)
+            #     """
+            #     # [num_users, max_history, embed_dim] -> [num_users * max_history, embed_dim]
+            #     hist_features_flat = hist_features.reshape(-1, hist_features.shape[-1])
+            #     hist_features_flat = hist_features_flat.unsqueeze(1)  # [num_users * max_history, 1, embed_dim]
+            #     hist_features_encoded = self.user_encoder(hist_features_flat)  # [num_users * max_history, embed_dim]
+            #     hist_features = hist_features_encoded.reshape(hist_embeds.shape[0], hist_embeds.shape[1], -1)
 
             # Compute similarities between candidates and history items for each user
             # [num_users, max_candidates, embed_dim] x [num_users, embed_dim, max_history]
             sims = torch.matmul(cand_embeds, hist_features.transpose(-2, -1))  # [num_users, max_candidates, max_history]
-            
+
             # Apply masks to zero out invalid candidates and history items
             sims = sims * hist_mask.unsqueeze(1)  # [num_users, max_candidates, max_history]
             sims = sims * cand_mask.unsqueeze(-1)  # Also mask out invalid candidates
-            
-            # Sum similarities across history dimension
-            sim_sums = sims.sum(dim=-1)  # [num_users, max_candidates]
 
-            # Update alpha parameters and sample from Beta distributions
-            alpha = alpha + sim_sums
-            return torch.distributions.Beta(alpha, beta).rsample()
+            # Take mean similarity across history dimension
+            sim_sums = sims.sum(dim=-1) / hist_mask.sum(dim=-1).unsqueeze(-1)
+            sim_sums = F.softmax(sim_sums, dim=-1)  # [num_users, max_candidates]
+
+            # Scale by pseudocount factor and update alpha/beta parameters
+            pseudocount = hist_mask.sum(dim=-1).unsqueeze(-1)
+            alpha += pseudocount * sim_sums
+            beta += pseudocount * (1 - sim_sums)
+            prior = torch.distributions.Beta(alpha, beta)
+            return prior.rsample()
+
 
     def apply_thompson_sampling(
         self,
@@ -160,6 +168,7 @@ class ThompsonSamplingMixin:
         cand_mask: torch.Tensor,
         hist_embeds: torch.Tensor,
         hist_mask: torch.Tensor,
+        user_vector: torch.Tensor,
     ) -> torch.Tensor:
         """Wraps the forward pass with Thompson sampling if enabled.
 
@@ -170,6 +179,7 @@ class ThompsonSamplingMixin:
             cand_embeds: Candidate news embeddings [num_users, max_candidates, embed_dim]
             hist_embeds: History news embeddings [num_users, max_history, embed_dim]
             hist_mask: Boolean mask indicating valid history items [num_users, max_history]
+            user_vector: User embedding vector [num_users, embed_dim]
 
         Returns:
             torch.Tensor: Original scores or Thompson sampled probabilities
@@ -178,6 +188,7 @@ class ThompsonSamplingMixin:
             return self._apply_thompson_sampling(
                 scores, batch, 
                 cand_embeds, cand_mask, 
-                hist_embeds, hist_mask
+                hist_embeds, hist_mask,
+                user_vector
             )
         return scores 

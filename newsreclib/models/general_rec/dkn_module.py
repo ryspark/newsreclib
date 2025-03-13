@@ -251,7 +251,8 @@ class DKNModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
         return self.apply_thompson_sampling(
             scores, batch,
             cand_news_vector_agg, mask_cand, 
-            hist_news_vector_agg, mask_hist
+            hist_news_vector_agg, mask_hist,
+            user_vector
         )
 
     def on_train_start(self) -> None:
