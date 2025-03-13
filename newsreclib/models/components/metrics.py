@@ -1,9 +1,8 @@
+from collections import defaultdict
 from typing import Dict, Any
 import json
 import torch
-from torchmetrics import MetricCollection
 from torchmetrics.classification import AUROC
-from torchmetrics.retrieval import RetrievalMRR, RetrievalNormalizedDCG
 from newsreclib.metrics.diversity import Diversity
 
 
@@ -43,8 +42,6 @@ class PerUserMetricsMixin:
         Returns:
             Dictionary mapping user IDs to their metrics
         """
-        from collections import defaultdict
-
         per_user_metrics = defaultdict(dict)
         unique_users = torch.unique(cand_indexes)
         
@@ -58,23 +55,17 @@ class PerUserMetricsMixin:
             # Compute recommendation metrics for this user
             user_rec_metrics = {
                 "auc": AUROC(task="binary", num_classes=2)(user_preds, user_targets).item(),
-                "mrr": RetrievalMRR()(user_preds, user_targets, indexes=torch.zeros_like(user_preds)).item(),
             }
-            
-            # Add NDCG metrics
-            for k in top_k_list:
-                ndcg = RetrievalNormalizedDCG(top_k=k)(
-                    user_preds, user_targets, indexes=torch.zeros_like(user_preds)
-                ).item()
-                user_rec_metrics[f"ndcg@{k}"] = ndcg
             
             # Add diversity metrics
             for k in top_k_list:
+                # Create proper indexes tensor of type long
+                indexes = torch.zeros(len(user_preds), dtype=torch.long)
                 categ_div = Diversity(num_classes=num_categ_classes, top_k=k)(
-                    user_preds, user_target_categories, torch.zeros_like(user_preds)
+                    user_preds, user_target_categories, indexes
                 ).item()
                 sent_div = Diversity(num_classes=num_sent_classes, top_k=k)(
-                    user_preds, user_target_sentiments, torch.zeros_like(user_preds)
+                    user_preds, user_target_sentiments, indexes
                 ).item()
                 user_rec_metrics[f"categ_div@{k}"] = categ_div
                 user_rec_metrics[f"sent_div@{k}"] = sent_div
