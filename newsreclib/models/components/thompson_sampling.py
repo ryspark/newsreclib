@@ -124,35 +124,29 @@ class ThompsonSamplingMixin:
             alpha = pseudocount * probs + bonus  # [num_users, max_candidates]
             beta = pseudocount * (1 - probs) + bonus  # [num_users, max_candidates]
 
-            # Get dimensions and device
-            num_users, max_history, embed_dim = hist_embeds.shape
-            device = hist_embeds.device
-
-            # Get valid history items and their users
-            valid_hist_mask = hist_mask.reshape(-1)  # [num_users * max_history]
-            valid_hist = hist_embeds.reshape(-1, embed_dim)[valid_hist_mask]  # [num_valid_hist, embed_dim]
-            valid_hist_users = batch["batch_hist"][valid_hist_mask]  # [num_valid_hist]
-
             # Process history through user encoder if available
+            hist_features = hist_embeds  # [num_users, max_history, embed_dim]
             if hasattr(self, 'user_encoder'):
-                valid_hist = self.user_encoder(valid_hist.unsqueeze(1)).squeeze(1)  # [num_valid_hist, embed_dim]
+                # Process each history embedding through user encoder
+                # [num_users, max_history, embed_dim] -> [num_users * max_history, embed_dim]
+                hist_features_flat = hist_features.reshape(-1, hist_features.shape[-1])
+                # Add dummy history dimension for user encoder
+                hist_features_flat = hist_features_flat.unsqueeze(1)  # [num_users * max_history, 1, embed_dim]
+                # Process through user encoder
+                hist_features_encoded = self.user_encoder(hist_features_flat)  # [num_users * max_history, embed_dim]
+                # Reshape back to [num_users, max_history, embed_dim]
+                hist_features = hist_features_encoded.reshape(hist_embeds.shape[0], hist_embeds.shape[1], -1)
 
-            # Get valid candidates and their users
-            valid_cand_mask = cand_mask.reshape(-1)  # [num_users * max_candidates]
-            valid_cand = cand_embeds.reshape(-1, embed_dim)[valid_cand_mask]  # [num_valid_cand, embed_dim]
-            valid_cand_users = batch["batch_cand"][valid_cand_mask]  # [num_valid_cand]
-
-            # Compute similarities between valid candidates and valid history items
-            sims = torch.matmul(valid_cand, valid_hist.t())  # [num_valid_cand, num_valid_hist]
-
-            # Only count similarities between matching users
-            user_match_mask = (valid_cand_users.unsqueeze(1) == valid_hist_users.unsqueeze(0))
-            sim_sums_valid = (sims * user_match_mask.float()).sum(dim=1)  # [num_valid_cand]
-
-            # Map similarities back to dense format
-            sim_sums = torch.zeros(num_users * max_candidates, device=device)
-            sim_sums[valid_cand_mask] = sim_sums_valid
-            sim_sums = sim_sums.reshape(num_users, -1)
+            # Compute similarities between candidates and history items for each user
+            # [num_users, max_candidates, embed_dim] x [num_users, embed_dim, max_history]
+            sims = torch.matmul(cand_embeds, hist_features.transpose(-2, -1))  # [num_users, max_candidates, max_history]
+            
+            # Apply masks to zero out invalid candidates and history items
+            sims = sims * hist_mask.unsqueeze(1)  # [num_users, max_candidates, max_history]
+            sims = sims * cand_mask.unsqueeze(-1)  # Also mask out invalid candidates
+            
+            # Sum similarities across history dimension
+            sim_sums = sims.sum(dim=-1)  # [num_users, max_candidates]
 
             # Update alpha parameters and sample from Beta distributions
             alpha = alpha + sim_sums
