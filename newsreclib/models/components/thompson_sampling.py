@@ -120,46 +120,43 @@ class ThompsonSamplingMixin:
             new_probs = torch.stack(sampled_probs, dim=0)
 
         elif self.ts_mode == "embed":
-            # Embedding-based implementation
             # Initialize alpha and beta parameters for each candidate article
-            alpha = pseudocount * probs + bonus
-            beta = pseudocount * (1 - probs) + bonus
+            alpha = pseudocount * probs + bonus  # [num_users, max_candidates]
+            beta = pseudocount * (1 - probs) + bonus  # [num_users, max_candidates]
 
-            # Compute cosine similarities between candidates and history for all users at once
-            # First create a combined mask for valid pairs
-            # [num_users, max_candidates, max_history]
-            combined_mask = cand_mask.unsqueeze(-1) & hist_mask.unsqueeze(1)
+            # Get dimensions and device
+            num_users, max_history, embed_dim = hist_embeds.shape
+            device = hist_embeds.device
 
-            # Reshape tensors for batch computation
-            # [num_users, max_candidates, 1, embed_dim] and [num_users, 1, max_history, embed_dim]
-            cand_embeds_expanded = cand_embeds.unsqueeze(2)
-            hist_embeds_expanded = hist_embeds.unsqueeze(1)
+            # Get valid history items and their users
+            valid_hist_mask = hist_mask.reshape(-1)  # [num_users * max_history]
+            valid_hist = hist_embeds.reshape(-1, embed_dim)[valid_hist_mask]  # [num_valid_hist, embed_dim]
+            valid_hist_users = batch["batch_hist"][valid_hist_mask]  # [num_valid_hist]
 
-            # Compute cosine similarities only where both candidate and history items are valid
-            # Output shape: [num_users, max_candidates, max_history]
-            sims = F.cosine_similarity(
-                cand_embeds_expanded,
-                hist_embeds_expanded,
-                dim=3
-            )
-            
-            # Normalize similarities to [0, 1] and apply mask
-            sims = (1 + sims) / 2
-            sims = sims * combined_mask.float()
+            # Process history through user encoder if available
+            if hasattr(self, 'user_encoder'):
+                valid_hist = self.user_encoder(valid_hist.unsqueeze(1)).squeeze(1)  # [num_valid_hist, embed_dim]
 
-            # Sum similarities for each candidate
-            # [num_users, max_candidates]
-            sim_sums = sims.sum(dim=2)
+            # Get valid candidates and their users
+            valid_cand_mask = cand_mask.reshape(-1)  # [num_users * max_candidates]
+            valid_cand = cand_embeds.reshape(-1, embed_dim)[valid_cand_mask]  # [num_valid_cand, embed_dim]
+            valid_cand_users = batch["batch_cand"][valid_cand_mask]  # [num_valid_cand]
 
-            # Update alpha parameters with similarity sums
-            # Note: no need to multiply by mask.float() again since sim_sums already respects the mask
+            # Compute similarities between valid candidates and valid history items
+            sims = torch.matmul(valid_cand, valid_hist.t())  # [num_valid_cand, num_valid_hist]
+
+            # Only count similarities between matching users
+            user_match_mask = (valid_cand_users.unsqueeze(1) == valid_hist_users.unsqueeze(0))
+            sim_sums_valid = (sims * user_match_mask.float()).sum(dim=1)  # [num_valid_cand]
+
+            # Map similarities back to dense format
+            sim_sums = torch.zeros(num_users * max_candidates, device=device)
+            sim_sums[valid_cand_mask] = sim_sums_valid
+            sim_sums = sim_sums.reshape(num_users, -1)
+
+            # Update alpha parameters and sample from Beta distributions
             alpha = alpha + sim_sums
-
-            # Sample from Beta distributions
-            prior = torch.distributions.Beta(alpha, beta)
-            new_probs = prior.rsample()
-
-            return new_probs
+            return torch.distributions.Beta(alpha, beta).rsample()
 
     def apply_thompson_sampling(
         self,
