@@ -266,7 +266,9 @@ class NPAModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
             scores, batch,
             cand_news_vector_agg, mask_cand, 
             hist_news_vector_agg, mask_hist,
-            user_vector
+            user_encoder_kwargs=dict(
+                projected_users=projected_users
+            )
         )
 
     def on_train_start(self) -> None:

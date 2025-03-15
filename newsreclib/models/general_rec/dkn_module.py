@@ -252,7 +252,11 @@ class DKNModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder)
             scores, batch,
             cand_news_vector_agg, mask_cand, 
             hist_news_vector_agg, mask_hist,
-            user_vector
+            user_encoder_kwargs=dict(
+                cand_news_vector=cand_news_vector_agg,
+                mask_hist=mask_hist,
+                mask_cand=mask_cand,
+            )
         )
 
     def on_train_start(self) -> None:

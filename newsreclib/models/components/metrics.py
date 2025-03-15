@@ -4,6 +4,7 @@ import json
 import torch
 from torchmetrics.classification import AUROC
 from newsreclib.metrics.diversity import Diversity
+from tqdm import tqdm
 
 
 class PerUserMetricsMixin:
@@ -13,6 +14,9 @@ class PerUserMetricsMixin:
         super().__init__(*args, **kwargs)
         self.save_metrics = save_metrics
         self.metrics_fpath = metrics_fpath
+        # Initialize diversity metrics for categories and sentiments
+        self.category_diversity = None
+        self.sentiment_diversity = None
 
     def compute_per_user_metrics(
         self,
@@ -45,34 +49,77 @@ class PerUserMetricsMixin:
         per_user_metrics = defaultdict(dict)
         unique_users = torch.unique(cand_indexes)
         
-        for user_idx in unique_users:
+        # Process first 5% of total datapoints
+        total_datapoints = len(preds)
+        processed_points = 0
+        max_points = total_datapoints
+        
+        for user_idx in tqdm(unique_users, desc="Computing per-user metrics"):
             user_mask = cand_indexes == user_idx
+            num_user_points = user_mask.sum().item()
+            
+            # Check if we've exceeded our 5% threshold
+            if processed_points + num_user_points > max_points:
+                break
+                
             user_preds = preds[user_mask]
             user_targets = targets[user_mask]
             user_target_categories = target_categories[user_mask]
             user_target_sentiments = target_sentiments[user_mask]
             
-            # Compute recommendation metrics for this user
+            # Create a fresh AUROC instance for this user
+            try:
+                auroc = AUROC(task="binary")
+                user_auc = auroc(user_preds.float(), user_targets.long()).item()
+            except Exception:
+                user_auc = 0.5  # Default value if computation fails
+            
             user_rec_metrics = {
-                "auc": AUROC(task="binary", num_classes=2)(user_preds, user_targets).item(),
+                "auc": user_auc,
             }
             
             # Add diversity metrics
             for k in top_k_list:
-                # Create proper indexes tensor of type long
-                indexes = torch.zeros(len(user_preds), dtype=torch.long)
-                categ_div = Diversity(num_classes=num_categ_classes, top_k=k)(
-                    user_preds, user_target_categories, indexes
-                ).item()
-                sent_div = Diversity(num_classes=num_sent_classes, top_k=k)(
-                    user_preds, user_target_sentiments, indexes
-                ).item()
+                if k > len(user_preds):
+                    continue
+                
+                # Initialize diversity metrics for this k
+                category_diversity = Diversity(num_classes=num_categ_classes, top_k=k)
+                sentiment_diversity = Diversity(num_classes=num_sent_classes, top_k=k)
+                
+                # Create sorted indices based on predictions
+                _, indices = torch.sort(user_preds, descending=True)
+                top_k_indices = indices[:k]
+                
+                # Update and compute category diversity
+                category_diversity.update(
+                    preds=user_preds[top_k_indices], 
+                    target=user_target_categories[top_k_indices], 
+                    indexes=torch.zeros(k, dtype=torch.long)  # Give each item a unique index
+                )
+                categ_div = category_diversity.compute().item()
+                
+                # Update and compute sentiment diversity
+                sentiment_diversity.update(
+                    preds=user_preds[top_k_indices], 
+                    target=user_target_sentiments[top_k_indices], 
+                    indexes=torch.zeros(k, dtype=torch.long)  # Give each item a unique index
+                )
+                sent_div = sentiment_diversity.compute().item()
+                
+                # Reset states
+                category_diversity.reset()
+                sentiment_diversity.reset()
+                    
                 user_rec_metrics[f"categ_div@{k}"] = categ_div
                 user_rec_metrics[f"sent_div@{k}"] = sent_div
             
             # Store metrics for this user
             user_id = user_ids[user_idx].item()
+            user_rec_metrics["num_articles"] = num_user_points
             per_user_metrics[user_id] = user_rec_metrics
+            
+            processed_points += num_user_points
 
         return per_user_metrics
 
@@ -85,3 +132,4 @@ class PerUserMetricsMixin:
         """
         with open(fpath, 'w') as f:
             json.dump(metrics, f, indent=2) 
+

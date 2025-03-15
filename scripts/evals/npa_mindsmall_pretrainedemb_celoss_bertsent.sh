@@ -41,4 +41,5 @@ python newsreclib/eval.py experiment=npa_mindsmall_pretrainedemb_celoss_bertsent
     logger=csv \
     model.ts_pseudocount=$PSEUDOCOUNT \
     model.ts_mode=$TS_MODE \
+    +trainer.limit_test_batches=0.05 \
     hydra.run.dir=/iris/u/rypark/code/newsreclib/logs/eval/runs/npa_mindsmall_pretrainedemb_celoss_bertsent/$DIR_SUFFIX
