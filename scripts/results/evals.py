@@ -3,48 +3,67 @@ import numpy as np
 import pandas as pd
 import json
 import os
+import argparse
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Generate evaluation plots')
+parser.add_argument('--save', action='store_true', help='Save plots instead of displaying them')
+parser.add_argument('--scatter', action='store_true', help='Generate scatter plots')
+parser.add_argument('--heatmap', action='store_true', help='Generate heatmap plots')
+parser.add_argument('--no-bar', action='store_true', help='Disable bar plots (enabled by default)')
+args = parser.parse_args()
+
+# Set global font sizes for all plots
+plt.rcParams.update({
+    'font.size': 15,           # Base font size
+    'axes.labelsize': 15,      # Axis labels
+    'axes.titlesize': 19,     # Title size
+    'xtick.labelsize': 13,     # X tick labels
+    'ytick.labelsize': 13,     # Y tick labels
+    'legend.fontsize': 17,     # Legend text
+    'legend.title_fontsize': 17 # Legend title
+})
 # Configuration
-root = "../../logs/eval/runs"
+root = "../../logs/eval_old/runs"
 output_dir = "./figs"
-os.makedirs(output_dir, exist_ok=True)
+if args.save:
+    os.makedirs(output_dir, exist_ok=True)
 
 # Metric definitions
+PSEUDOCOUNT = 5
 METRICS_TO_PLOT = [
     {
         'x': 'categ_div@5',
         'y': 'auc',
         'x_label': 'Category Diversity@5',
-        'y_label': 'AUC Score',
-        'title_template': '{}: Category Diversity vs AUC Trade-off'
+        'y_label': 'AUC',
+        'title_template': '{}: Category Diversity@5 vs AUC Trade-off'
     },
     {
-        'x': 'sent_div@5',
+        'x': 'categ_div@10',
         'y': 'auc',
-        'x_label': 'Sentence Diversity@5',
-        'y_label': 'AUC Score',
-        'title_template': '{}: Sentence Diversity vs AUC Trade-off'
-    }
+        'x_label': 'Category Diversity@10',
+        'y_label': 'AUC',
+        'title_template': '{}: Category Diversity@10 vs AUC Trade-off'
+    },
 ]
 
 # Method mappings
 methods = {
-    "embed": "Similarity IC-TS",
-    "category": "Category IC-TS",
-    "resample": "Resampling"
+    "base": "Pretrained",
+    "embed": "In-context TS",
+    "resample": "Prior sampling"
 }
-
 # Essential colors only
 colors = {
-    'Base': '#7f8c8d',              # Gray for baseline
-    'Similarity IC-TS': '#e74c3c',   # Red for worse performance
-    'Category IC-TS': '#2ecc71',     # Green for better performance
-    'Resampling': '#9467bd'     # Purple for resampling
+    'Pretrained': '#7f8c8d',              # Gray for baseline
+    'Prior sampling': '#3498db',          # Blue for worse performance
+    'In-context TS': '#2ecc71',   # Green for better performance
 }
 
 def get_params(name):
     if name == "base":
-        return "Base", 0
+        return "Pretrained", 0
     method, pseudocount = name.split("_")
     return methods[method], int(pseudocount)
 
@@ -93,159 +112,188 @@ def get_dynamic_markers_and_sizes(unique_counts):
     return markers, sizes
 
 # Plot scatter plots for each metric pair
-for metric_config in METRICS_TO_PLOT:
-    for base_model, model_group in df.groupby('base_model'):
-        plt.figure(figsize=(10, 6))
-        
-        # Get dynamic markers and sizes for this group's counts
-        unique_counts = sorted(model_group['counts'].unique())
-        markers, sizes = get_dynamic_markers_and_sizes(unique_counts)
-        
-        # Plot each method
-        for method in colors.keys():
-            method_data = model_group[model_group['method'] == method]
+if args.scatter:
+    for metric_config in METRICS_TO_PLOT:
+        for base_model, model_group in df.groupby('base_model'):
+            fig, ax = plt.subplots(figsize=(5, 4))  # Increased figure size
             
-            if not method_data.empty:
-                # Plot points
-                for count, count_data in method_data.groupby('counts'):
-                    label = f"{method}" if count == 0 else f"{method} (n={count})"
-                    plt.scatter(count_data[metric_config['x']], 
-                              count_data[metric_config['y']],
-                              color=colors[method],
-                              marker=markers[count],
-                              s=sizes[count],
-                              label=label,
-                              zorder=3)
+            # Get dynamic markers and sizes for this group's counts
+            unique_counts = sorted(model_group['counts'].unique())
+            markers, sizes = get_dynamic_markers_and_sizes(unique_counts)
+            
+            # Plot each method
+            for method in colors.keys():
+                method_data = model_group[model_group['method'] == method]
                 
-                # Connect points for the same method
-                if len(method_data) > 1:
-                    method_points = method_data.sort_values('counts')
-                    plt.plot(method_points[metric_config['x']], 
-                            method_points[metric_config['y']],
-                            color=colors[method],
-                            linestyle='--',
-                            alpha=0.6,
-                            zorder=2)
+                if not method_data.empty:
+                    # Plot points with slightly smaller markers
+                    for count, count_data in method_data.groupby('counts'):
+                        label = f"{method}" if count == 0 else f"{method} (n={count})"
+                        ax.scatter(count_data[metric_config['x']], 
+                                 count_data[metric_config['y']],
+                                 color=colors[method],
+                                 marker=markers[count],
+                                 s=sizes[count] * 0.8,  # Slightly reduce marker size
+                                 label=label)
+                    
+                    # Connect points for the same method
+                    if len(method_data) > 1:
+                        method_points = method_data.sort_values('counts')
+                        ax.plot(method_points[metric_config['x']], 
+                               method_points[metric_config['y']],
+                               color=colors[method],
+                               linestyle='--',
+                               alpha=0.6)
 
-        plt.title(metric_config['title_template'].format(base_model), fontsize=12, pad=15)
-        plt.xlabel(metric_config['x_label'], fontsize=11)
-        plt.ylabel(metric_config['y_label'], fontsize=11)
-        
-        # Add grid but make it subtle
-        plt.grid(True, linestyle='--', alpha=0.7, zorder=1)
-        
-        # Customize legend
-        plt.legend(title='Method & Sample Size', 
-                  title_fontsize=10,
-                  bbox_to_anchor=(1.02, 1),
-                  loc='upper left',
-                  borderaxespad=0)
-        
-        # Adjust layout to prevent legend cutoff
-        plt.tight_layout()
-        
-        # Save figure
-        metric_name = metric_config['x'].replace('@', '_at_').replace('/', '_')
-        filename = f"{base_model.lower()}_tradeoff_{metric_name}_vs_{metric_config['y']}.png"
-        plt.savefig(os.path.join(output_dir, filename), bbox_inches='tight', dpi=300)
-        plt.close()
+            ax.set_title(metric_config['title_template'].format(base_model))
+            ax.set_xlabel(metric_config['x_label'])
+            ax.set_ylabel(metric_config['y_label'])
+            
+            # Customize legend
+            # ax.legend(title='Method & Sample Size', 
+            #          bbox_to_anchor=(1.02, 1),
+            #          loc='upper left')
+            
+            # Adjust layout to prevent legend cutoff
+            plt.tight_layout()
+            
+            # Save or display figure
+            if args.save:
+                metric_name = metric_config['x'].replace('@', '_at_').replace('/', '_')
+                filename = f"{base_model.lower()}_tradeoff_{metric_name}_vs_{metric_config['y']}.png"
+                plt.savefig(os.path.join(output_dir, filename), bbox_inches='tight', dpi=300)
+            else:
+                plt.show()
+            plt.close()
 
 # Create separate bar plots for metrics
-base_model_colors = ['#00B4D8', '#0077B6', '#023E8A']  # Blue gradient
-method_order = list(colors.keys())
-
-# Use a clean, modern style
-plt.style.use('seaborn-v0_8-white')
-
-for metric_config in METRICS_TO_PLOT:
-    for metric in [metric_config['x'], metric_config['y']]:
-        fig, ax = plt.subplots()
-        fig.patch.set_facecolor('white')
-        ax.set_facecolor('#F8F9FA')
-        
-        # Prepare data
-        base_models = sorted(df['base_model'].unique())
-        x = np.arange(len(method_order))
-        width = 0.22
-        
-        # Plot bars for each base model
-        for i, (base_model, color) in enumerate(zip(base_models, base_model_colors)):
-            values = []
-            errors = []
-            for method in method_order:
-                data = df[(df['base_model'] == base_model) & (df['method'] == method)][metric]
-                values.append(data.mean())
-                errors.append(data.std())
+if not args.no_bar:
+    for metric_config in METRICS_TO_PLOT:
+        for metric in [metric_config['x'], metric_config['y']]:
+            fig, ax = plt.subplots(figsize=(8, 6))  # Increased figure size
             
-            bars = ax.bar(x + i*width, values, width,
-                         label=base_model,
-                         color=color,
-                         capsize=3,
-                         error_kw={'elinewidth': 1.2,
-                                  'capthick': 1.2,
-                                  'alpha': 0.8},
-                         zorder=3)
+            # Prepare data - filter for PSEUDOCOUNT except for Base model
+            base_models = sorted(df['base_model'].unique())
+            x = np.arange(len(base_models))
+            width = 0.25
             
-            # for bar, value in zip(bars, values):
-            #     height = bar.get_height()
-            #     ax.text(bar.get_x() + bar.get_width()/2., height + 0.002,
-            #            f'{value:.3f}',
-            #            ha='center', va='bottom',
-            #            fontsize=8,
-            #            color='#444444',
-            #            zorder=4)
-        
-        metric_label = metric_config['x_label'] if metric == metric_config['x'] else metric_config['y_label']
-        
-        ax.set_title(f'Model Performance: {metric_label}', 
-                     pad=20, 
-                     fontsize=16, 
-                     fontweight='bold',
-                     color='#333333')
-        
-        ax.set_xlabel('Thompson Sampling Method', 
-                     fontsize=12, 
-                     labelpad=10,
-                     color='#333333')
-        
-        ax.set_ylabel(metric_label, 
-                     fontsize=12, 
-                     labelpad=10,
-                     color='#333333')
-        
-        ax.set_xticks(x + width)
-        ax.set_xticklabels(method_order, 
-                           rotation=25, 
-                           ha='right',
-                           fontsize=10)
-        
-        ax.yaxis.grid(True, linestyle='--', alpha=0.2, color='#666666', zorder=0)
-        ax.set_axisbelow(True)
-        
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#666666')
-        ax.spines['bottom'].set_color('#666666')
-        ax.tick_params(colors='#666666')
-        
-        legend = ax.legend(title='Base Model',
-                          title_fontsize=11,
-                          fontsize=10,
-                          bbox_to_anchor=(1.02, 1),
-                          loc='upper left',
-                          borderaxespad=0,
-                          frameon=True,
-                          edgecolor='#666666')
-        legend.get_frame().set_facecolor('white')
-        legend.get_frame().set_alpha(0.9)
-        
-        ymin, ymax = ax.get_ylim()
-        ax.set_ylim(ymin, ymax + (ymax-ymin)*0.1)
-        
-        plt.tight_layout()
-        
-        # Save figure
-        metric_name = metric.replace('@', '_at_').replace('/', '_')
-        filename = f"barplot_{metric_name}.png"
-        plt.savefig(os.path.join(output_dir, filename), bbox_inches='tight', dpi=300)
-        plt.close()
+            # Plot bars for each method
+            for i, (method, color) in enumerate(colors.items()):
+                values = []
+                errors = []
+                for base_model in base_models:
+                    # Filter for PSEUDOCOUNT only for non-base methods
+                    if method == methods["base"]:
+                        data = df[(df['base_model'] == base_model) & 
+                                 (df['method'] == method)][metric]
+                    else:
+                        data = df[(df['base_model'] == base_model) & 
+                                 (df['method'] == method) & 
+                                 (df['counts'] == PSEUDOCOUNT)][metric]
+                    values.append(data.mean() if not data.empty else np.nan)
+                    errors.append(data.std() if not data.empty and len(data) > 1 else 0)
+                
+                # Skip plotting if all values are NaN
+                if all(np.isnan(values)):
+                    continue
+                    
+                # Plot bars for this method
+                bars = ax.bar(x + i*width, values, width,
+                            label=method,
+                            color=color,
+                            hatch='///' if method != 'In-context TS' else None,
+                            #yerr=[0 if np.isnan(e) else e for e in errors],
+                            capsize=3,
+                            error_kw={'capthick': 1})
+            
+            metric_label = metric_config['x_label'] if metric == metric_config['x'] else metric_config['y_label']
+            
+            ax.set_title(f'{metric_label}')
+            ax.set_xlabel('Base Model')
+            ax.set_ylabel(metric_label)
+            
+            # Adjust x-axis positioning to center labels
+            ax.set_xticks(x + width)
+            ax.set_xticklabels(base_models)
+            
+            # Customize legend
+            # ax.legend(title='Method',
+            #          bbox_to_anchor=(1.02, 1),
+            #          loc='upper left')
+            
+            plt.tight_layout()
+            
+            # Save or display figure
+            if args.save:
+                metric_name = metric.replace('@', '_at_').replace('/', '_')
+                filename = f"barplot_{metric_name}_pseudocount_{PSEUDOCOUNT}.png"
+                plt.savefig(os.path.join(output_dir, filename), bbox_inches='tight', dpi=300)
+            else:
+                plt.show()
+            plt.close()
+
+# Create heatmap plots showing relative performance differences
+if args.heatmap:
+    for metric_config in METRICS_TO_PLOT:
+        for metric in [metric_config['x'], metric_config['y']]:
+            # Create figure with larger size
+            fig, ax = plt.subplots(figsize=(5, 4))  # Increased figure size
+            
+            # Prepare data matrix
+            base_models = sorted(df['base_model'].unique())
+            method_order = list(colors.keys())
+            
+            # Create performance matrix
+            perf_matrix = np.zeros((len(base_models), len(method_order)))
+            for i, base_model in enumerate(base_models):
+                for j, method in enumerate(method_order):
+                    if method == methods["base"]:
+                        data = df[(df['base_model'] == base_model) & 
+                                 (df['method'] == method)][metric]
+                    else:
+                        data = df[(df['base_model'] == base_model) & 
+                                 (df['method'] == method) & 
+                                 (df['counts'] == PSEUDOCOUNT)][metric]
+                    if not data.empty:
+                        perf_matrix[i, j] = data.mean()
+                    else:
+                        perf_matrix[i, j] = np.nan
+            
+            # Calculate relative performance (difference from baseline)
+            baseline_idx = method_order.index(methods["base"])
+            relative_perf = perf_matrix - perf_matrix[:, baseline_idx:baseline_idx+1]
+            
+            # Create heatmap
+            im = ax.imshow(relative_perf, cmap='RdYlGn', aspect='auto')
+            
+            # Customize the plot
+            ax.set_xticks(np.arange(len(method_order)))
+            ax.set_yticks(np.arange(len(base_models)))
+            ax.set_xticklabels(method_order)
+            ax.set_yticklabels(base_models)
+            
+            # Add value annotations
+            for i in range(len(base_models)):
+                for j in range(len(method_order)):
+                    if not np.isnan(relative_perf[i, j]):
+                        text = ax.text(j, i, f'{relative_perf[i, j]:.3f}',
+                                     ha='center', va='center')
+            
+            # Add colorbar
+            cbar = ax.figure.colorbar(im, ax=ax)
+            cbar.ax.set_ylabel('Relative Performance', rotation=-90, va='bottom')
+            
+            # Set title
+            metric_label = metric_config['x_label'] if metric == metric_config['x'] else metric_config['y_label']
+            ax.set_title(f'Relative Performance: {metric_label}')
+            
+            plt.tight_layout()
+            
+            # Save or display figure
+            if args.save:
+                metric_name = metric.replace('@', '_at_').replace('/', '_')
+                filename = f"heatmap_{metric_name}_pseudocount_{PSEUDOCOUNT}.png"
+                plt.savefig(os.path.join(output_dir, filename), bbox_inches='tight', dpi=300)
+            else:
+                plt.show()
+            plt.close()
