@@ -55,7 +55,7 @@ valid_time_split: "2019-11-14 00:00:00" # interactions with timestamp before thi
 neg_sampling_ratio: 4
 max_title_len: 30
 max_abstract_len: 50
-max_history_len: 50
+max_history_len: 200
 concatenate_inputs: False
 tokenizer_name: null
 tokenizer_use_fast: null

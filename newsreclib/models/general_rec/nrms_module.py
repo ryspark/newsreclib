@@ -129,6 +129,9 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
         if self.hparams.save_metrics:
             assert isinstance(self.hparams.metrics_fpath, str)
 
+        # Set up per-user metrics templates
+        self.setup_per_user_metrics(top_k_list=self.hparams.top_k_list, num_categ_classes=self.num_categ_classes)
+
         # initialize loss
         if not self.hparams.dual_loss_training:
             self.criterion = self._get_loss(self.hparams.loss)
@@ -545,17 +548,15 @@ class NRMSModule(ThompsonSamplingMixin, PerUserMetricsMixin, AbstractRecommneder
         # Compute per-user metrics
         if self.hparams.save_metrics:
             per_user_metrics = self.compute_per_user_metrics(
+                user_ids=user_ids,
                 preds=preds,
                 targets=targets,
                 target_categories=target_categories,
-                target_sentiments=target_sentiments,
                 cand_indexes=cand_indexes,
-                user_ids=user_ids,
-                num_categ_classes=self.num_categ_classes,
-                num_sent_classes=self.num_sent_classes,
-                top_k_list=self.hparams.top_k_list,
+                cand_news_size=cand_news_size,
+                hist_news_size=hist_news_size
             )
-            self.save_per_user_metrics(per_user_metrics, self.hparams.metrics_fpath)
+            self.log_per_user_metrics(per_user_metrics)
 
         # log metrics
         self.log_dict(

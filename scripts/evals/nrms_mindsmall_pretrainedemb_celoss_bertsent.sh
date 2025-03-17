@@ -36,11 +36,11 @@ conda activate news
 cd /iris/u/rypark/code/newsreclib
 pwd
 
+# +trainer.limit_test_batches=0.05 \
 python newsreclib/eval.py experiment=nrms_mindsmall_pretrainedemb_celoss_bertsent \
     ckpt_path=/iris/u/rypark/code/newsreclib/logs/train/runs/nrms_mindsmall_pretrainedemb_celoss_bertsent_s42/2025-03-01_16-53-36/checkpoints/last.ckpt \
     logger=csv \
     model.ts_pseudocount=$PSEUDOCOUNT \
     model.save_metrics=true \
     model.ts_mode=$TS_MODE \
-    +trainer.limit_test_batches=0.05 \
     hydra.run.dir=/iris/u/rypark/code/newsreclib/logs/eval/runs/nrms_mindsmall_pretrainedemb_celoss_bertsent/$DIR_SUFFIX

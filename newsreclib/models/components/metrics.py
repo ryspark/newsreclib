@@ -1,14 +1,24 @@
 from collections import defaultdict
-from typing import Dict, Any
-import json
+from typing import Dict, Any, List, Optional
+from tqdm import tqdm
 import torch
 from torchmetrics.classification import AUROC
 from newsreclib.metrics.diversity import Diversity
 from tqdm import tqdm
+from torchmetrics import MetricCollection
+from torchmetrics.retrieval import RetrievalMRR, RetrievalNormalizedDCG
 
 
 class PerUserMetricsMixin:
-    """Mixin class that adds per-user metrics computation functionality."""
+    """Mixin class that adds functionality for computing and saving per-user metrics.
+    
+    This mixin provides methods to compute individual metrics for each user during testing.
+    It requires the base class to have certain metric templates defined.
+    
+    Attributes:
+        ind_test_rec_metrics_template: Template for recommendation metrics per user
+        ind_test_categ_div_metrics_template: Template for category diversity metrics per user
+    """
 
     def __init__(self, save_metrics: bool = True, metrics_fpath: str = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -18,118 +28,123 @@ class PerUserMetricsMixin:
         self.category_diversity = None
         self.sentiment_diversity = None
 
+    def setup_per_user_metrics(self, top_k_list: List[int], num_categ_classes: int) -> None:
+        """Sets up the metric templates needed for per-user metric computation.
+        
+        Args:
+            top_k_list: List of positions at which to compute rank-based metrics
+            num_categ_classes: Number of category classes
+        """
+        # Create base metric collections that will be cloned for each user
+        rec_metrics = MetricCollection(
+            {
+                "auc": AUROC(task="binary", num_classes=2),
+            }
+        )
+
+        categ_div_metrics_dict = {}
+        for k in top_k_list:
+            categ_div_metrics_dict["categ_div@" + str(k)] = Diversity(
+                num_classes=num_categ_classes, top_k=k
+            )
+        categ_div_metrics = MetricCollection(categ_div_metrics_dict)
+
+        # Store templates that will be cloned per user
+        self.ind_test_rec_metrics_template = rec_metrics
+        self.ind_test_categ_div_metrics_template = categ_div_metrics
+
     def compute_per_user_metrics(
         self,
+        user_ids: torch.Tensor,
         preds: torch.Tensor,
         targets: torch.Tensor,
         target_categories: torch.Tensor,
-        target_sentiments: torch.Tensor,
         cand_indexes: torch.Tensor,
-        user_ids: torch.Tensor,
-        num_categ_classes: int,
-        num_sent_classes: int,
-        top_k_list: list,
-    ) -> Dict[str, Dict[str, float]]:
-        """Compute metrics for each individual user.
-
+        cand_news_size: torch.Tensor,
+        hist_news_size: torch.Tensor
+    ) -> Dict[str, MetricCollection]:
+        """Computes metrics for buckets of history sizes.
+        
         Args:
+            user_ids: Tensor of user IDs
             preds: Model predictions
             targets: Ground truth labels
             target_categories: Category labels for candidates
-            target_sentiments: Sentiment labels for candidates
-            cand_indexes: Index mapping for candidates to users
-            user_ids: User IDs
-            num_categ_classes: Number of category classes
-            num_sent_classes: Number of sentiment classes
-            top_k_list: List of k values for top-k metrics
-
+            cand_indexes: Candidate indexes
+            cand_news_size: Candidate news size
+            hist_news_size: History news size
         Returns:
-            Dictionary mapping user IDs to their metrics
+            Dictionary mapping history size buckets to their metric collections
         """
-        per_user_metrics = defaultdict(dict)
-        unique_users = torch.unique(cand_indexes)
+        per_bucket_metrics = {}
         
-        # Process first 5% of total datapoints
-        total_datapoints = len(preds)
-        processed_points = 0
-        max_points = total_datapoints
+        # Create N buckets based on history size range
+        N = 25
+        min_hist = hist_news_size.min().item()
+        max_hist = hist_news_size.max().item()
+        bucket_size = (max_hist - min_hist) / N
         
-        for user_idx in tqdm(unique_users, desc="Computing per-user metrics"):
-            user_mask = cand_indexes == user_idx
-            num_user_points = user_mask.sum().item()
+        # Handle edge case where all histories are same size
+        if bucket_size == 0:
+            bucket_size = 1
+        print(min_hist, max_hist, bucket_size, N)
+        
+        for i in range(N):
+            bucket_start = min_hist + i * bucket_size
+            bucket_end = min_hist + (i + 1) * bucket_size
             
-            # Check if we've exceeded our 5% threshold
-            if processed_points + num_user_points > max_points:
-                break
-                
-            user_preds = preds[user_mask]
-            user_targets = targets[user_mask]
-            user_target_categories = target_categories[user_mask]
-            user_target_sentiments = target_sentiments[user_mask]
+            # Get indices for all users in this bucket
+            if i == N - 1:  # Include the max value in the last bucket
+                bucket_idx = torch.where((hist_news_size >= bucket_start) & (hist_news_size <= bucket_end))[0]
+            else:
+                bucket_idx = torch.where((hist_news_size >= bucket_start) & (hist_news_size < bucket_end))[0]
             
-            # Create a fresh AUROC instance for this user
-            try:
-                auroc = AUROC(task="binary")
-                user_auc = auroc(user_preds.float(), user_targets.long()).item()
-            except Exception:
-                user_auc = 0.5  # Default value if computation fails
+            # Skip empty buckets
+            if len(bucket_idx) == 0:
+                continue
+            print(f"BUCKET {i}: {len(bucket_idx)}, {bucket_start}-{bucket_end}")
+                
+            # Clone metric templates for this bucket
+            ind_test_rec_metrics = self.ind_test_rec_metrics_template.clone()
+            ind_test_categ_div_metrics = self.ind_test_categ_div_metrics_template.clone()
             
-            user_rec_metrics = {
-                "auc": user_auc,
-            }
+            # Compute metrics for this bucket
+            ind_test_rec_metrics(
+                preds[bucket_idx],
+                targets[bucket_idx],
+                **{"indexes": cand_indexes[bucket_idx]}
+            )
+            ind_test_categ_div_metrics(
+                preds[bucket_idx],
+                target_categories[bucket_idx], 
+                cand_indexes[bucket_idx]
+            )
             
-            # Add diversity metrics
-            for k in top_k_list:
-                if k > len(user_preds):
-                    continue
+            # Combine metrics with proper prefixes
+            bucket_metrics = {}
+            bucket_range = f"{bucket_start:.1f}-{bucket_end:.1f}"
+            for name, value in ind_test_rec_metrics.compute().items():
+                bucket_metrics[f"test_hist_bucket_{bucket_range}/{name}"] = value
+            for name, value in ind_test_categ_div_metrics.compute().items():
+                bucket_metrics[f"test_hist_bucket_{bucket_range}/{name}"] = value
                 
-                # Initialize diversity metrics for this k
-                category_diversity = Diversity(num_classes=num_categ_classes, top_k=k)
-                sentiment_diversity = Diversity(num_classes=num_sent_classes, top_k=k)
-                
-                # Create sorted indices based on predictions
-                _, indices = torch.sort(user_preds, descending=True)
-                top_k_indices = indices[:k]
-                
-                # Update and compute category diversity
-                category_diversity.update(
-                    preds=user_preds[top_k_indices], 
-                    target=user_target_categories[top_k_indices], 
-                    indexes=torch.zeros(k, dtype=torch.long)  # Give each item a unique index
-                )
-                categ_div = category_diversity.compute().item()
-                
-                # Update and compute sentiment diversity
-                sentiment_diversity.update(
-                    preds=user_preds[top_k_indices], 
-                    target=user_target_sentiments[top_k_indices], 
-                    indexes=torch.zeros(k, dtype=torch.long)  # Give each item a unique index
-                )
-                sent_div = sentiment_diversity.compute().item()
-                
-                # Reset states
-                category_diversity.reset()
-                sentiment_diversity.reset()
-                    
-                user_rec_metrics[f"categ_div@{k}"] = categ_div
-                user_rec_metrics[f"sent_div@{k}"] = sent_div
+            # Store metrics for this bucket
+            per_bucket_metrics[bucket_range] = bucket_metrics
             
-            # Store metrics for this user
-            user_id = user_ids[user_idx].item()
-            user_rec_metrics["num_articles"] = num_user_points
-            per_user_metrics[user_id] = user_rec_metrics
-            
-            processed_points += num_user_points
+        return per_bucket_metrics
 
-        return per_user_metrics
-
-    def save_per_user_metrics(self, metrics: Dict[str, Dict[str, float]], fpath: str) -> None:
-        """Save per-user metrics to a JSON file.
-
+    def log_per_user_metrics(self, per_user_metrics: Dict[str, Dict[str, MetricCollection]]) -> None:
+        """Logs the computed per-user metrics.
+        
         Args:
-            metrics: Dictionary mapping user IDs to their metrics
-            fpath: Path where to save the metrics
+            per_user_metrics: Dictionary of per-user metrics to log
         """
-        with open(fpath, 'w') as f:
-            json.dump(metrics, f, indent=2) 
+        for user_metrics in per_user_metrics.values():
+            self.log_dict(
+                user_metrics,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True
+            )
 
